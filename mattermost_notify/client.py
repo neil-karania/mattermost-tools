@@ -77,10 +77,9 @@ class Notify:
             "direct_message_channels": {},
             "sent_messages": {},
         }
-
+        self.ssl_verify = ssl_verify
         self.__team_id = self.__get_team_id(team_name)
         self.__own_user_id = self.__get_user_id(bot_name if bot_name else BOT_NAME)
-        self.ssl_verify = ssl_verify
 
     def test_connection(self) -> bool:
         """
