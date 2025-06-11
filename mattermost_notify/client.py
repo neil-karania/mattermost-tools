@@ -77,7 +77,7 @@ class Notify:
             "direct_message_channels": {},
             "sent_messages": {},
         }
-        self.ssl_verify = ssl_verify
+        self.__ssl_verify = ssl_verify
         self.__team_id = self.__get_team_id(team_name)
         self.__own_user_id = self.__get_user_id(bot_name if bot_name else BOT_NAME)
 
@@ -90,7 +90,7 @@ class Notify:
         bool
             True if the connection is successful
         """
-        response = requests.get(self.endpoint("users"), headers=self.headers, verify=self.ssl_verify)
+        response = requests.get(self.endpoint("users"), headers=self.headers, verify=self.__ssl_verify)
         try:
             response_json = response.json()
             return response.status_code == 200
@@ -165,7 +165,7 @@ class Notify:
         channel_id = lines[2].strip()
         message_id = lines[3].strip()
         self.__cache["sent_messages"][id] = MessageUpdator(
-            "", self, channel_id, message_id, id, self.ssl_verify
+            "", self, channel_id, message_id, id, self.__ssl_verify
         )
 
     @property
@@ -194,7 +194,7 @@ class Notify:
             return self.__cache["user_ids"][username]
 
         response = requests.get(
-            self.endpoint(f"users/username/{username}"), headers=self.headers, verify=self.ssl_verify
+            self.endpoint(f"users/username/{username}"), headers=self.headers, verify=self.__ssl_verify
         )
         user_id = response.json()["id"]
         self.__cache["user_ids"][username] = user_id
@@ -215,7 +215,7 @@ class Notify:
             The team ID
         """
         response = requests.get(
-            self.endpoint(f"teams/name/{team_name}"), headers=self.headers, verify=self.ssl_verify
+            self.endpoint(f"teams/name/{team_name}"), headers=self.headers, verify=self.__ssl_verify
         )
         if response.status_code == 403:
             raise PermissionError(
@@ -241,7 +241,7 @@ class Notify:
             return self.__cache["channel_ids"][channel_name]
         response = requests.get(
             self.endpoint(f"teams/{self.__team_id}/channels/name/{channel_name}"),
-            headers=self.headers, verify=self.ssl_verify
+            headers=self.headers, verify=self.__ssl_verify
         )
         channel_id = response.json()["id"]
         self.__cache["channel_ids"][channel_name] = channel_id
@@ -290,13 +290,13 @@ class Notify:
         }
         headers = self.headers
         del headers["Content-Type"]  # = "multipart/form-data
-        response = requests.post(self.endpoint("files"), files=data, headers=headers, verify=self.ssl_verify)
+        response = requests.post(self.endpoint("files"), files=data, headers=headers, verify=self.__ssl_verify)
         if not response.status_code == 201:
             raise ValueError("Failed to upload file")
         file_id = response.json()["file_infos"][0]["id"]
         data = {"channel_id": channel_id, "file_ids": [file_id]}
         response = requests.post(
-            self.endpoint("posts"), headers=self.headers, json=data, verify=self.ssl_verify
+            self.endpoint("posts"), headers=self.headers, json=data, verify=self.__ssl_verify
         )
         return response.status_code == 201
 
@@ -322,13 +322,13 @@ class Notify:
         }
         headers = self.headers
         del headers["Content-Type"]
-        response = requests.post(self.endpoint("files"), files=data, headers=headers, verify=self.ssl_verify)
+        response = requests.post(self.endpoint("files"), files=data, headers=headers, verify=self.__ssl_verify)
         if not response.status_code == 201:
             raise ValueError("Failed to upload file")
         file_id = response.json()["file_infos"][0]["id"]
         data = {"channel_id": channel_id, "file_ids": [file_id]}
         response = requests.post(
-            self.endpoint("posts"), headers=self.headers, json=data, verify=self.ssl_verify
+            self.endpoint("posts"), headers=self.headers, json=data, verify=self.__ssl_verify
         )
         return response.status_code == 201
 
@@ -364,7 +364,7 @@ class Notify:
 
         data = {"channel_id": channel_id, "message": message}
         response = requests.post(
-            self.endpoint("posts"), headers=self.headers, json=data, verify=self.ssl_verify
+            self.endpoint("posts"), headers=self.headers, json=data, verify=self.__ssl_verify
         )
         if files is not None:
             for file in files:
@@ -406,7 +406,7 @@ class Notify:
         data = {"channel_id": channel_id, "message": message}
 
         response = requests.post(
-            self.endpoint("posts"), headers=self.headers, json=data, verify=self.ssl_verify
+            self.endpoint("posts"), headers=self.headers, json=data, verify=self.__ssl_verify
         )
         if files is not None:
             for file in files:
