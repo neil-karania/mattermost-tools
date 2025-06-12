@@ -5,12 +5,12 @@ setup(
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     package_dir={"": "."},
-    version="0.0.3",
+    version="0.0.4",
     packages=find_packages(),
     install_requires=[
         # Add your dependencies here
         "requests",
-        "argparse", "websockets",
+        "argparse", "websockets", "bs4",
     ],
     entry_points={
         "console_scripts": [

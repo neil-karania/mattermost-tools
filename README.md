@@ -60,7 +60,6 @@ notify.notify("My latest log file", user="your_username", files=["my_pipeline/lo
 
 
 # [Mattermost API](https://api.mattermost.com/) bindings
-([Read on github](https://github.com/someone-somenet-org/mattermost-python-api))
 
 In productive use on a 6k+ users E10 instance at https://mattermost.fsinf.at
 + Used to manage channels, users and everything.
@@ -80,7 +79,12 @@ In productive use on a 6k+ users E10 instance at https://mattermost.fsinf.at
 import mattermost
 
 # login
-mm = mattermost.MMApi("https://mattermost.example.com/api")
+mm = mattermost.MMApi("https://mattermost.example.com")
+# alternatively pass your gitlab url for oauth login
+# mm = mattermost.MMApi("https://mattermost.example.com", gitlab_url="https://gitlab.example.com")
+# you can also provide ssl_verify flag
+# mm = mattermost.MMApi("https://mattermost.example.com", ssl_verify=False)
+# mm = mattermost.MMApi("https://mattermost.example.com", gitlab_url="https://gitlab.example.com", ssl_verify=True)
 mm.login("user@example.com", "my-pw")
 # alternatively use a personal-access-token/bot-token.
 # mm.login(bearer="my-personal-access-token")
@@ -147,7 +151,7 @@ Some endpoints are not handled (yet). You can manually call these endpoints. Ava
 
 ### stdin2channel
 You can pipe ``STDIN`` to a channel:
-+ ``echo "message" | python3 -m mattermost.stdin2channel https://localhost:8065/api 'user@example.com' 'my-pw' 'channel_id'``
++ ``echo "message" | python3 -m mattermost.stdin2channel https://localhost:8065 'user@example.com' 'my-pw' 'channel_id'``
 **This leaks your credentials to everyone on your system!** Only use this in trusted dev-envs.
 
 

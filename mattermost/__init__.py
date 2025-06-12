@@ -10,9 +10,9 @@ import logging
 import json
 import random
 import warnings
-
+import bs4
 import requests
-
+from urllib.parse import urljoin
 from .version import __version__
 
 logger = logging.getLogger("mattermost")
@@ -25,13 +25,13 @@ class ApiException(Exception):
 class MMApi:
     """Mattermost API v4 bindings."""
 
-    def __init__(self, url, ssl_verify=True):
+    def __init__(self, url, gitlab_url = None, ssl_verify=True):
         self._url = url
+        self._gitlab_url = gitlab_url
         self._bearer = None
         self._ssl_verify = ssl_verify
         # temp/retrieved data.
         self._my_user_id = None
-
         # the only way to detect our session :/
         self._my_user_agent = "SomeMMApi-"+__version__+"-"+str(random.randrange(100000000000, 999999999999))
         self._headers = requests.utils.default_headers()
@@ -153,6 +153,68 @@ class MMApi:
 
 ################################################
 #+ **LOGIN/LOGOUT**
+    def _oauth_login(self, login_id=None, password=None):
+        """
+        Function to login to Mattermost via Gitlab OAuth.
+        Parameters
+        ----------
+        login_id
+        password
+
+        Returns
+        -------
+
+        """
+        # creating a session to fetch MMAUTHTOKEN
+        session = requests.Session()
+
+        # Fetch authenticity token for oauth login
+        res1 = session.get(self._url + '/oauth/gitlab/login', verify=self._ssl_verify, allow_redirects=True)
+        if res1.status_code != 200:
+            logger.critical("User-Login failed: %d", res1.status_code)
+            return False, None
+        soup = bs4.BeautifulSoup(res1.text, 'html.parser')
+        authenticity_token = soup.find('input', attrs={'name': 'authenticity_token'})['value']
+        session.headers.update({'Referer': res1.url})
+
+        # login into Gitlab
+        data = {'username': login_id, 'password': password, 'authenticity_token': authenticity_token}
+        res2 = session.post(urljoin(self._gitlab_url,'users/auth/ldapmain/callback'), data=data,
+                           verify=self._ssl_verify, allow_redirects=True)
+        if res2.status_code != 200:
+            logger.critical("User-Login failed: %d", res2.status_code)
+            return None
+
+        # fetching the redirect link
+        soup = bs4.BeautifulSoup(res2.text, 'html.parser')
+        redirect_url = soup.find('a')['href']
+
+        # get call to redirect url
+        res3 = session.get(redirect_url, verify=self._ssl_verify, allow_redirects=True)
+        if res3.status_code != 200:
+            logger.critical("User-Login failed: %d", res3.status_code)
+            return None
+
+        session.headers.update({'Referer': res1.url, 'X-Requested-With': 'XMLHttpRequest'})
+
+        # fetching MMAUTHTOKEN
+        res4 = session.get(urljoin(self._url,'/api/v4/users/me'), verify=self._ssl_verify, allow_redirects=True)
+        if res4.status_code != 200:
+            logger.critical("Bearer-Login failed: %d", res4.status_code)
+            return None
+        self._bearer = session.cookies['MMAUTHTOKEN']
+        logger.info("Token Bearer: %s", self._bearer)
+        self._headers.update({"Authorization": "Bearer "+self._bearer})
+
+        # also store our user_id
+        ret = json.loads(res4.text)
+        self._my_user_id = ret["id"]
+
+        #closing the session
+        session.close()
+        return ret
+
+
 
 
     # login is special - dont use helpers above. We also need login to be called, even if bearer is used, so we know out user-id and session-id.
@@ -170,8 +232,12 @@ class MMApi:
 
         # note: bearer vs self._bearer
         if not bearer:
+            if self._gitlab_url:
+                ret = self._oauth_login(login_id, password)
+                return ret
+
             props = {"login_id": login_id, "password": password, "token":token}
-            res = requests.post(self._url + "/v4/users/login", headers=self._headers, data=json.dumps(props),
+            res = requests.post(self._url + "/api/v4/users/login", headers=self._headers, data=json.dumps(props),
                                 verify=self._ssl_verify)
 
             if res.status_code != 200:
@@ -187,7 +253,7 @@ class MMApi:
         self._headers.update({"Authorization": "Bearer "+self._bearer})
 
         if bearer:
-            res = requests.get(self._url + "/v4/users/me", headers=self._headers, verify=self._ssl_verify)
+            res = requests.get(self._url + "/api/v4/users/me", headers=self._headers, verify=self._ssl_verify)
             if res.status_code != 200:
                 logger.critical("Bearer-Login failed: %d", res.status_code)
                 return None
@@ -202,7 +268,7 @@ class MMApi:
         """
         This will end the session at the server and invalidate this MMApi-object.
         """
-        return self._post("/v4/users/logout", **kwargs)
+        return self._post("/api/v4/users/logout", **kwargs)
 
 
 
@@ -221,7 +287,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/users", data=props, **kwargs)
+        return self._post("/api/v4/users", data=props, **kwargs)
 
 
 
@@ -246,7 +312,7 @@ class MMApi:
         """
         page = 0
         while True:
-            data_page = self._get("/v4/users", params={
+            data_page = self._get("/api/v4/users", params={
                 "page":str(page),
                 "per_page":"200",
                 **({"in_team": in_team} if in_team else {}),
@@ -281,7 +347,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/users/ids", data=user_ids_list, **kwargs)
+        return self._post("/api/v4/users/ids", data=user_ids_list, **kwargs)
 
 
 
@@ -298,7 +364,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/users/group_channels", data=group_channel_ids_list, **kwargs)
+        return self._post("/api/v4/users/group_channels", data=group_channel_ids_list, **kwargs)
 
 
 
@@ -315,7 +381,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/users/usernames", data=usernames_list, **kwargs)
+        return self._post("/api/v4/users/usernames", data=usernames_list, **kwargs)
 
 
 
@@ -340,9 +406,9 @@ class MMApi:
             ApiException: Passed on from lower layers.
         """
         if user_id is None:
-            return self._get("/v4/users/me", **kwargs)
+            return self._get("/api/v4/users/me", **kwargs)
 
-        return self._get("/v4/users/"+user_id, **kwargs)
+        return self._get("/api/v4/users/"+user_id, **kwargs)
 
 
 
@@ -365,7 +431,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._put("/v4/users/"+user_id+"/patch", data=props, **kwargs)
+        return self._put("/api/v4/users/"+user_id+"/patch", data=props, **kwargs)
 
 
 
@@ -392,7 +458,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._get("/v4/users/username/"+username, **kwargs)
+        return self._get("/api/v4/users/username/"+username, **kwargs)
 
 
 
@@ -416,7 +482,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/users/"+user_id+"/demote", **kwargs)
+        return self._post("/api/v4/users/"+user_id+"/demote", **kwargs)
 
 
 
@@ -434,7 +500,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/users/"+user_id+"/promote", **kwargs)
+        return self._post("/api/v4/users/"+user_id+"/promote", **kwargs)
 
 
 
@@ -461,7 +527,7 @@ class MMApi:
         if user_id is None:
             user_id = self._my_user_id
 
-        return self._get("/v4/users/"+user_id+"/sessions", **kwargs)
+        return self._get("/api/v4/users/"+user_id+"/sessions", **kwargs)
 
 
 
@@ -481,7 +547,7 @@ class MMApi:
         if session_id is None:
             session_id = self._bearer
 
-        return self._post("/v4/users/"+user_id+"/sessions/revoke", data={"session_id": session_id}, **kwargs)
+        return self._post("/api/v4/users/"+user_id+"/sessions/revoke", data={"session_id": session_id}, **kwargs)
 
 
 
@@ -535,7 +601,7 @@ class MMApi:
         """
         page = 0
         while True:
-            data_page = self._get("/v4/teams", params={
+            data_page = self._get("/api/v4/teams", params={
                 "page":str(page),
                 **({"include_total_count": include_total_count} if include_total_count else {}),
             }, **kwargs)
@@ -562,7 +628,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._get("/v4/teams/"+team_id, **kwargs)
+        return self._get("/api/v4/teams/"+team_id, **kwargs)
 
 
 
@@ -585,7 +651,7 @@ class MMApi:
             ApiException: Passed on from lower layers.
         """
 
-        return self._get("/v4/teams/name/" + team_name, **kwargs)
+        return self._get("/api/v4/teams/name/" + team_name, **kwargs)
     #def search_teams() #NOT_IMPLEMENTED
     #def exists_team() #NOT_IMPLEMENTED
     #def get_teams_for_user() #NOT_IMPLEMENTED
@@ -607,7 +673,7 @@ class MMApi:
         """
         page = 0
         while True:
-            data_page = self._get("/v4/teams/"+team_id+"/members", params={"page":str(page)}, **kwargs)
+            data_page = self._get("/api/v4/teams/"+team_id+"/members", params={"page":str(page)}, **kwargs)
 
             if data_page == []:
                 break
@@ -632,7 +698,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/teams/"+team_id+"/members", data={
+        return self._post("/api/v4/teams/"+team_id+"/members", data={
             "team_id": team_id,
             "user_id": user_id,
         }, **kwargs)
@@ -659,7 +725,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._get("/v4/teams/"+team_id+"/members/"+user_id, **kwargs)
+        return self._get("/api/v4/teams/"+team_id+"/members/"+user_id, **kwargs)
 
 
 
@@ -677,7 +743,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._delete("/v4/teams/"+team_id+"/members/"+user_id, **kwargs)
+        return self._delete("/api/v4/teams/"+team_id+"/members/"+user_id, **kwargs)
 
 
 
@@ -707,7 +773,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._put("/v4/teams/"+team_id+"/members/"+user_id+"/schemeRoles", data=props, **kwargs)
+        return self._put("/api/v4/teams/"+team_id+"/members/"+user_id+"/schemeRoles", data=props, **kwargs)
 
 
 
@@ -734,7 +800,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/teams/"+team_id+"/invite-guests/email", data={
+        return self._post("/api/v4/teams/"+team_id+"/invite-guests/email", data={
             "emails": [guest_email],
             "channels": channels,
             **({"message": message} if message else {}),
@@ -764,7 +830,7 @@ class MMApi:
         """
         page = 0
         while True:
-            data_page = self._get("/v4/teams/"+team_id+"/channels", params={"page":str(page)}, **kwargs)
+            data_page = self._get("/api/v4/teams/"+team_id+"/channels", params={"page":str(page)}, **kwargs)
 
             if data_page == []:
                 break
@@ -802,7 +868,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/channels", data={
+        return self._post("/api/v4/channels", data={
             "team_id": team_id,
             "name": name,
             "display_name": display_name,
@@ -826,7 +892,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/channels/direct", data=[self._my_user_id, other_user_id], **kwargs)
+        return self._post("/api/v4/channels/direct", data=[self._my_user_id, other_user_id], **kwargs)
 
 
 
@@ -843,7 +909,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/channels/group", data=other_user_ids_list, **kwargs)
+        return self._post("/api/v4/channels/group", data=other_user_ids_list, **kwargs)
 
 
 
@@ -867,7 +933,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._get("/v4/channels/"+channel_id, **kwargs)
+        return self._get("/api/v4/channels/"+channel_id, **kwargs)
 
 
 
@@ -885,7 +951,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._put("/v4/channels/"+channel_id, data=props, **kwargs)
+        return self._put("/api/v4/channels/"+channel_id, data=props, **kwargs)
 
 
 
@@ -903,7 +969,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._put("/v4/channels/"+channel_id+"/patch", data=props, **kwargs)
+        return self._put("/api/v4/channels/"+channel_id+"/patch", data=props, **kwargs)
 
 
 
@@ -920,7 +986,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._get("/v4/channels/"+channel_id+"/pinned", **kwargs)
+        return self._get("/api/v4/channels/"+channel_id+"/pinned", **kwargs)
 
 
 
@@ -938,7 +1004,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/teams/"+team_id+"/channels/search", data={"term": term}, **kwargs)
+        return self._post("/api/v4/teams/"+team_id+"/channels/search", data={"term": term}, **kwargs)
 
 
 
@@ -958,7 +1024,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._get("/v4/teams/"+team_id+"/channels/name/"+channel_name, params={
+        return self._get("/api/v4/teams/"+team_id+"/channels/name/"+channel_name, params={
             **({"include_deleted": include_deleted} if include_deleted else {}),
         }, **kwargs)
 
@@ -979,7 +1045,7 @@ class MMApi:
         """
         page = 0
         while True:
-            data_page = self._get("/v4/channels/"+channel_id+"/members", params={"page":str(page)}, **kwargs)
+            data_page = self._get("/api/v4/channels/"+channel_id+"/members", params={"page":str(page)}, **kwargs)
 
             if data_page == []:
                 break
@@ -1004,7 +1070,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/channels/"+channel_id+"/members", data={"user_id": user_id}, **kwargs)
+        return self._post("/api/v4/channels/"+channel_id+"/members", data={"user_id": user_id}, **kwargs)
 
 
 
@@ -1022,7 +1088,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._get("/v4/channels/"+channel_id+"/members/"+user_id, **kwargs)
+        return self._get("/api/v4/channels/"+channel_id+"/members/"+user_id, **kwargs)
 
 
 
@@ -1040,7 +1106,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._delete("/v4/channels/"+channel_id+"/members/"+user_id, **kwargs)
+        return self._delete("/api/v4/channels/"+channel_id+"/members/"+user_id, **kwargs)
 
 
 
@@ -1059,7 +1125,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._put("/v4/channels/"+channel_id+"/members/"+user_id+"/schemeRoles", data=props, **kwargs)
+        return self._put("/api/v4/channels/"+channel_id+"/members/"+user_id+"/schemeRoles", data=props, **kwargs)
 
 
 
@@ -1077,7 +1143,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._get("/v4/users/"+user_id+"/teams/"+team_id+"/channels/members", **kwargs)
+        return self._get("/api/v4/users/"+user_id+"/teams/"+team_id+"/channels/members", **kwargs)
 
 
 
@@ -1095,7 +1161,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._get("/v4/users/"+user_id+"/teams/"+team_id+"/channels", **kwargs)
+        return self._get("/api/v4/users/"+user_id+"/teams/"+team_id+"/channels", **kwargs)
 
 
 
@@ -1127,7 +1193,7 @@ class MMApi:
             for filename in filepaths:
                 file_ids.append(self.upload_file(channel_id, filename, **kwargs)["id"])
 
-        return self._post("/v4/posts", data={
+        return self._post("/api/v4/posts", data={
             "channel_id": channel_id,
             "message": message,
             **({"props": props} if props else {"props": {"from_webhook":"true"}}),
@@ -1152,7 +1218,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/posts/ephemeral", data={
+        return self._post("/api/v4/posts/ephemeral", data={
             "user_id": user_id,
             "post":{
                 "channel_id": channel_id,
@@ -1175,7 +1241,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        post = self._get("/v4/posts/"+post_id, **kwargs)
+        post = self._get("/api/v4/posts/"+post_id, **kwargs)
         if "has_reactions" not in post:
             post["has_reactions"] = False
         return post
@@ -1195,7 +1261,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._delete("/v4/posts/"+post_id, **kwargs)
+        return self._delete("/api/v4/posts/"+post_id, **kwargs)
 
 
     def update_post(self, post_id, message, is_pinned, has_reactions, props, **kwargs):
@@ -1215,7 +1281,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._put("/v4/posts/"+post_id, data={
+        return self._put("/api/v4/posts/"+post_id, data={
             "id": post_id,
             "message": message,
             "is_pinned": is_pinned,
@@ -1242,7 +1308,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._put("/v4/posts/"+post_id+"/patch", data={
+        return self._put("/api/v4/posts/"+post_id+"/patch", data={
             **({"message": message} if message else {}),
             **({"is_pinned": is_pinned} if is_pinned else {}),
             **({"file_ids": file_ids} if file_ids else {}),
@@ -1267,7 +1333,7 @@ class MMApi:
         """
         page = 0
         while True:
-            data_page = self._get("/v4/channels/"+channel_id+"/posts", params={"page":str(page)}, **kwargs)
+            data_page = self._get("/api/v4/channels/"+channel_id+"/posts", params={"page":str(page)}, **kwargs)
 
             if data_page["order"] == []:
                 break
@@ -1296,7 +1362,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/files", multipart_formdata={'files':open(filepath, "rb"), "channel_id":(None, channel_id)}, **kwargs)["file_infos"][0]
+        return self._post("/api/v4/files", multipart_formdata={'files':open(filepath, "rb"), "channel_id":(None, channel_id)}, **kwargs)["file_infos"][0]
 
 
 
@@ -1313,7 +1379,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._get("/v4/files/"+file_id, raw=True, **kwargs)
+        return self._get("/api/v4/files/"+file_id, raw=True, **kwargs)
 
 
 
@@ -1345,7 +1411,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/reactions", data={
+        return self._post("/api/v4/reactions", data={
             "user_id": user_id,
             "post_id": post_id,
             "emoji_name": emoji_name,
@@ -1376,7 +1442,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/hooks/outgoing", data={
+        return self._post("/api/v4/hooks/outgoing", data={
             "team_id": team_id,
             "display_name": display_name,
             "trigger_words": trigger_words,
@@ -1403,7 +1469,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._get("/v4/hooks/outgoing", params={
+        return self._get("/api/v4/hooks/outgoing", params={
             "team_id":team_id,
             **({"channel_id": channel_id} if channel_id else {}),
         }, **kwargs)
@@ -1423,7 +1489,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._delete("/v4/hooks/outgoing/"+hook_id, **kwargs)
+        return self._delete("/api/v4/hooks/outgoing/"+hook_id, **kwargs)
 
 
 
@@ -1446,7 +1512,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/commands", data={
+        return self._post("/api/v4/commands", data={
             "team_id": team_id,
             "trigger": trigger,
             "url": url,
@@ -1468,7 +1534,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._get("/v4/commands", params={
+        return self._get("/api/v4/commands", params={
             "team_id":team_id,
             "custom_only":True,
         }, **kwargs)
@@ -1488,7 +1554,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._put("/v4/commands/"+data["id"], data=data, **kwargs)
+        return self._put("/api/v4/commands/"+data["id"], data=data, **kwargs)
 
 
 
@@ -1505,7 +1571,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._delete("/v4/commands/"+command_id, **kwargs)
+        return self._delete("/api/v4/commands/"+command_id, **kwargs)
 
 
 
@@ -1576,7 +1642,7 @@ class MMApi:
         Raises:
             ApiException: Passed on from lower layers.
         """
-        return self._post("/v4/actions/dialogs/open", data={
+        return self._post("/api/v4/actions/dialogs/open", data={
             "trigger_id": trigger_id,
             "url": response_url,
             "dialog": dialog,

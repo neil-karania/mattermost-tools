@@ -20,8 +20,8 @@ def main():
     mm_api = None
     chan_id = None
 
-    if "MM_APIURL" in os.environ:
-        mm_api = mattermost.MMApi(os.environ["MM_APIURL"])
+    if "MM_URL" in os.environ:
+        mm_api = mattermost.MMApi(os.environ["MM_URL"])
     else:
         show_usage = True
 
@@ -46,7 +46,7 @@ def main():
 
 
     if show_usage:
-        print(cleandoc("""required ENV-parameters: MM_APIURL, MM_USER+MM_PASS or MM_BEARER, MM_CHANID.
+        print(cleandoc("""required ENV-parameters: MM_URL, MM_USER+MM_PASS or MM_BEARER, MM_CHANID.
             arguments: [PREFIX] [SUFFIX]
             """))
         sys.exit(1)
