@@ -813,32 +813,52 @@ class MMApi:
     #def set_team_scheme() #NOT_IMPLEMENTED
     #def get_team_members_minus_group_members() #NOT_IMPLEMENTED
 
-
-
-    def get_team_channels(self, team_id, **kwargs): #This belongs here, not to channels!
+    def _paged_fetch(self, path, **kwargs):
         """
-        Generator: Get a page of public channels on a team.
+        Pagination for fetching data.
+        Parameters
+        ----------
+        path
+        kwargs
 
-        Args:
-            team_id (string): team to get channels from.
+        Returns
+        -------
 
-        Returns:
-            generates: Channel.
-
-        Raises:
-            ApiException: Passed on from lower layers.
         """
         page = 0
         while True:
-            data_page = self._get("/api/v4/teams/"+team_id+"/channels", params={"page":str(page)}, **kwargs)
-
-            if data_page == []:
+            data_page = self._get(path, params={"page": str(page)}, **kwargs)
+            if not data_page:
                 break
             page += 1
+            for chan in data_page:
+                yield chan
 
-            for data in data_page:
-                yield data
+    def get_team_channels(self, team_id, private=False, **kwargs):
+        """
+        Generator: Get all public—and if private=True, also private—channels on a team.
 
+        Args:
+            team_id (str):   team to get channels from.
+            private (bool):  whether to include private channels as well.
+            **kwargs:        passed through to self._get().
+
+        Yields:
+            dict:  channel object
+
+        Raises:
+            ApiException:  from self._get
+        """
+        # always fetch public
+        public_path = f"/api/v4/teams/{team_id}/channels"
+        for channel in self._paged_fetch(public_path, **kwargs):
+            yield channel
+
+        # optionally fetch private
+        if private:
+            private_path = f"/api/v4/teams/{team_id}/channels/private"
+            for channel in self._paged_fetch(private_path, **kwargs):
+                yield channel
 
 
 ################################################
