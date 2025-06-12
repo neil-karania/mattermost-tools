@@ -31,6 +31,7 @@ class MMApi:
         self._bearer = None
         self._ssl_verify = ssl_verify
         # temp/retrieved data.
+        self._is_admin = False
         self._my_user_id = None
         # the only way to detect our session :/
         self._my_user_agent = "SomeMMApi-"+__version__+"-"+str(random.randrange(100000000000, 999999999999))
@@ -209,7 +210,7 @@ class MMApi:
         # also store our user_id
         ret = json.loads(res4.text)
         self._my_user_id = ret["id"]
-
+        self._is_admin = True if 'system_admin' in ret['roles'] else False
         #closing the session
         session.close()
         return ret
@@ -261,6 +262,7 @@ class MMApi:
         # also store our user_id
         ret = json.loads(res.text)
         self._my_user_id = ret["id"]
+        self._is_admin = True if 'system_admin' in ret['roles'] else False
         return ret
 
 
@@ -311,10 +313,11 @@ class MMApi:
             ApiException: Passed on from lower layers.
         """
         page = 0
+        per_page = 200
         while True:
             data_page = self._get("/api/v4/users", params={
                 "page":str(page),
-                "per_page":"200",
+                "per_page":str(per_page),
                 **({"in_team": in_team} if in_team else {}),
                 **({"not_in_team": not_in_team} if not_in_team else {}),
                 **({"not_in_team": not_in_team} if not_in_team else {}),
@@ -332,6 +335,8 @@ class MMApi:
             for data in data_page:
                 yield data
 
+            if len(data_page) < per_page:
+                break
 
 
     def get_users_by_ids_list(self, user_ids_list, **kwargs): #UNTESTED
@@ -600,9 +605,14 @@ class MMApi:
             ApiException: Passed on from lower layers.
         """
         page = 0
+        per_page = 200
+        if self._is_admin:
+            endpoint = "/api/v4/teams"
+        else:
+            endpoint = "/api/v4/users/"+self._my_user_id+"/teams"
         while True:
-            data_page = self._get("/api/v4/teams", params={
-                "page":str(page),
+            data_page = self._get(endpoint, params={
+                "page":str(page), "per_page":str(per_page),
                 **({"include_total_count": include_total_count} if include_total_count else {}),
             }, **kwargs)
 
@@ -613,6 +623,8 @@ class MMApi:
             for data in data_page:
                 yield data
 
+            if len(data_page) < per_page:
+                break
 
 
     def get_team(self, team_id, **kwargs):
@@ -654,9 +666,39 @@ class MMApi:
         return self._get("/api/v4/teams/name/" + team_name, **kwargs)
     #def search_teams() #NOT_IMPLEMENTED
     #def exists_team() #NOT_IMPLEMENTED
-    #def get_teams_for_user() #NOT_IMPLEMENTED
 
+    def get_teams_for_user(self, user_id: str, include_total_count=None, **kwargs):
+        """
+        Generator: Page through all teams that a given user belongs to.
 
+        Args:
+            user_id (str): ID of the user whose teams you want to fetch.
+            include_total_count (bool, optional): see MM-API doc.
+
+        Returns:
+            generates: One Team at a time.
+
+        Raises:
+            ApiException: Passed on from lower layers.
+        """
+        page = 0
+        per_page = 200
+        endpoint = "/api/v4/users/" + user_id + "/teams"
+        while True:
+            data_page = self._get(endpoint, params={
+                "page": str(page), "per_page": str(per_page),
+                **({"include_total_count": include_total_count} if include_total_count else {}),
+            }, **kwargs)
+
+            if data_page == []:
+                break
+            page += 1
+
+            for data in data_page:
+                yield data
+
+            if len(data_page) < per_page:
+                break
 
     def get_team_members(self, team_id, **kwargs):
         """
@@ -672,8 +714,9 @@ class MMApi:
             ApiException: Passed on from lower layers.
         """
         page = 0
+        per_page = 200
         while True:
-            data_page = self._get("/api/v4/teams/"+team_id+"/members", params={"page":str(page)}, **kwargs)
+            data_page = self._get("/api/v4/teams/"+team_id+"/members", params={"page":str(page), "per_page":str(per_page)}, **kwargs)
 
             if data_page == []:
                 break
@@ -681,6 +724,9 @@ class MMApi:
 
             for data in data_page:
                 yield data
+
+            if len(data_page) < per_page:
+                break
 
 
 
@@ -826,13 +872,17 @@ class MMApi:
 
         """
         page = 0
+        per_page = 200
         while True:
-            data_page = self._get(path, params={"page": str(page)}, **kwargs)
+            data_page = self._get(path, params={"page": str(page), "per_page": str(per_page)}, **kwargs)
             if not data_page:
                 break
             page += 1
             for chan in data_page:
                 yield chan
+
+            if len(data_page) < per_page:
+                break
 
     def get_team_channels(self, team_id, private=False, **kwargs):
         """
@@ -1064,8 +1114,10 @@ class MMApi:
             ApiException: Passed on from lower layers.
         """
         page = 0
+        per_page = 200
         while True:
-            data_page = self._get("/api/v4/channels/"+channel_id+"/members", params={"page":str(page)}, **kwargs)
+            data_page = self._get("/api/v4/channels/"+channel_id+"/members", params={"page":str(page),
+                                                                                     "per_page": str(per_page)}, **kwargs)
 
             if data_page == []:
                 break
@@ -1352,8 +1404,10 @@ class MMApi:
             ApiException: Passed on from lower layers.
         """
         page = 0
+        per_page = 200
         while True:
-            data_page = self._get("/api/v4/channels/"+channel_id+"/posts", params={"page":str(page)}, **kwargs)
+            data_page = self._get("/api/v4/channels/"+channel_id+"/posts", params={"page":str(page),
+                                                                                   "per_page": str(per_page)}, **kwargs)
 
             if data_page["order"] == []:
                 break
